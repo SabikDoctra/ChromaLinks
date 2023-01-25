@@ -1,16 +1,12 @@
 ﻿using ChromaControl.Shared;
 
-using CUESDK;
-
 using Microsoft.Win32;
 
-using NzxtRGB;
-
+using OpenRGB.NET;
 using Razer.Chroma.Broadcast;
 
 using System;
-using System.Drawing;
-using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Forms;
@@ -23,14 +19,11 @@ namespace ChromaLinks
     public partial class App : System.Windows.Application
     {
         private static RzChromaBroadcastAPI _api;
-        private static SmartDeviceV2 _smartDeviceV2;
-        private int _corsairDeviceCount;
-        private Task _syncTask;
-        private bool _isLinkNZXT;
-        private bool _isLinkCorsair;
+        private static OpenRGBClient _sdk;
+        private bool _isLinkOpenRGB = true;
+        private OpenRGB.NET.Models.Device[] _devices;
         private ContextMenuStrip _menu;
-        private string _nzxtMenuText => _isLinkNZXT ? "NZXTとのリンクを解除する" : "NZXTとリンクする";
-        private string _corsairMenuText => _isLinkCorsair ? "Corsairとのリンクを解除する" : "Corsairとリンクする";
+        private string _openRGBMenuText => _isLinkOpenRGB ? "Disable OpenRGB" : "Enable OpenRGB";
 
         protected override void OnStartup(StartupEventArgs e)
         {
@@ -38,9 +31,8 @@ namespace ChromaLinks
 
             var icon = GetResourceStream(new Uri("icon.ico", UriKind.Relative)).Stream;
             _menu = new ContextMenuStrip();
-            _menu.Items.Add(_nzxtMenuText, null, NZXTLink_Click);
-            _menu.Items.Add(_corsairMenuText, null, CorsairLink_Click);
-            _menu.Items.Add("終了", null, Exit_Click);
+            _menu.Items.Add(_openRGBMenuText, null, OpenRGBLink_Click);
+            _menu.Items.Add("Exit", null, Exit_Click);
             var notifyIcon = new System.Windows.Forms.NotifyIcon
             {
                 Visible = true,
@@ -50,29 +42,17 @@ namespace ChromaLinks
             };
             notifyIcon.MouseClick += NotifyIcon_Click;
             SystemEvents.SessionSwitch += new SessionSwitchEventHandler(systemEvents_SessionSwitch);
-            _syncTask = Task.Factory.StartNew(() => startChromaSync());
+            var _syncTask = Task.Factory.StartNew(() => startChromaSync());
         }
 
         private void startChromaSync()
         {
-            if (!Utilities.InitializeEnvironment("ASUS", "DEF05DCE-1662-4D9A-A312-A31028651915"))
+            if (!Utilities.InitializeEnvironment("THUNDERX3", "776775F5-0E6E-4E19-9D67-F4E25E2DCF0E"))
                 return;
 
-            // Setup NZXT Device
-            var config = new NzxtDeviceConfig();
-            config.RestartNzxtCamOnFail = true;
-            config.RestartNzxtOnClose = true;
-
-            _smartDeviceV2 = SmartDeviceV2.OpenDeviceAsync(config).Result;
-
-            // Setup Corsair Device
-            CorsairLightingSDK.PerformProtocolHandshake();
-
-            if (CorsairLightingSDK.GetLastError() != CorsairError.Success)
-                Console.WriteLine("Failed to connect to iCUE");
-
-            CorsairLightingSDK.RequestControl(CorsairAccessMode.ExclusiveLightingControl);
-            _corsairDeviceCount = CorsairLightingSDK.GetDeviceCount();
+            Thread.Sleep(5000);
+            // Setup OpenRGB Device
+            onLed();
 
             _api = new RzChromaBroadcastAPI();
             _api.ConnectionChanged += _api_ConnectionChanged;
@@ -91,39 +71,23 @@ namespace ChromaLinks
 
         private void _api_ColorChanged(object sender, RzChromaBroadcastColorChangedEventArgs e)
         {
-            if (_isLinkNZXT)
+            if (_isLinkOpenRGB)
             {
-                Color[] channel1Colors = Enumerable.Repeat(e.Colors[0], 16).ToArray();
-                Color[] channel2Colors = Enumerable.Repeat(e.Colors[0], 16).ToArray();
-                _smartDeviceV2.SendRGB(1, channel1Colors);
-                _smartDeviceV2.SendRGB(2, channel2Colors);
-            }
-            if (_isLinkCorsair)
-            {
-                try
+                var _i = 0;
+                var _colorFromSynapse = 0;
+                foreach (var _device in _devices)
                 {
-                    Color[] colors = e.Colors;
-                    for (int i = 0; i < _corsairDeviceCount; i++)
+                    foreach (var _color in _device.Colors)
                     {
-                        CorsairLedPositions deviceLeds = CorsairLightingSDK.GetLedPositionsByDeviceIndex(i);
-                        CorsairLedColor[] buffer = new CorsairLedColor[deviceLeds.NumberOfLeds];
-                        CorsairLedColor corsairLedColor = default(CorsairLedColor);
-                        corsairLedColor.R = colors[0].R;
-                        corsairLedColor.G = colors[0].G;
-                        corsairLedColor.B = colors[0].B;
-                        CorsairLedColor currentColor = corsairLedColor;
-                        for (int j = 0; j < deviceLeds.NumberOfLeds; j++)
-                        {
-                            buffer[j] = currentColor;
-                            buffer[j].LedId = deviceLeds.LedPosition[j].LedId;
-                        }
-                        CorsairLightingSDK.SetLedsColorsBufferByDeviceIndex(i, buffer);
-                        CorsairLightingSDK.SetLedsColorsFlushBuffer();
+                        _color.R = e.Colors[_colorFromSynapse].R;
+                        _color.G = e.Colors[_colorFromSynapse].G;
+                        _color.B = e.Colors[_colorFromSynapse].B;
+                        _colorFromSynapse++;
+                        if (_colorFromSynapse > 4)
+                            _colorFromSynapse = 0;
                     }
-                }
-                catch (Exception ex)
-                {
-
+                    _sdk.UpdateLeds(_i, _device.Colors);
+                    _i++;
                 }
             }
         }
@@ -141,24 +105,14 @@ namespace ChromaLinks
             }
         }
 
-        private void NZXTLink_Click(object sender, EventArgs e)
+        private void OpenRGBLink_Click(object sender, EventArgs e)
         {
-            if (_isLinkNZXT)
-                _isLinkNZXT = false;
+            if (_isLinkOpenRGB)
+                _isLinkOpenRGB = false;
             else
-                _isLinkNZXT = true;
+                _isLinkOpenRGB = true;
 
-            _menu.Items[0].Text = _nzxtMenuText;
-        }
-
-        private void CorsairLink_Click(object sender, EventArgs e)
-        {
-            if (_isLinkCorsair)
-                _isLinkCorsair = false;
-            else
-                _isLinkCorsair = true;
-
-            _menu.Items[1].Text = _corsairMenuText;
+            _menu.Items[0].Text = _openRGBMenuText;
         }
 
         private void systemEvents_SessionSwitch(object sender, SessionSwitchEventArgs e)
@@ -172,31 +126,41 @@ namespace ChromaLinks
 
         private void onLed()
         {
-            if (CorsairLightingSDK.GetLastError() != CorsairError.Success)
-                Console.WriteLine("Failed to connect to iCUE");
-
-            Task.Delay(5000).Wait();
-            CorsairLightingSDK.RequestControl(CorsairAccessMode.ExclusiveLightingControl);
-            _corsairDeviceCount = CorsairLightingSDK.GetDeviceCount();
-
-            _isLinkCorsair = true;
+            var _sdkInitialized = false;
+            while (!_sdkInitialized)
+            {
+                try
+                {
+                    _sdk = new OpenRGBClient(name: "ChromaLinks OpenRGB Client", autoconnect: true, timeout: 1000);
+                    var deviceCount = _sdk.GetControllerCount();
+                    if(deviceCount != 0)
+                    {
+                        _sdkInitialized = true;
+                        var devices = _sdk.GetAllControllerData();
+                        
+                        var _i = 0;
+                        _devices = new OpenRGB.NET.Models.Device[deviceCount];
+                        foreach (var device in devices)
+                        {
+                            _devices[_i] = device;
+                            _i++;
+                        }
+                    }
+                }
+                catch (TimeoutException)
+                {
+                    Thread.Sleep(5000);
+                }
+            }
         }
 
         private void offLed()
         {
-            Color[] channel1Colors;
-            Color[] channel2Colors = (channel1Colors = new Color[0]);
-            _smartDeviceV2.SendRGB(1, channel1Colors);
-            _smartDeviceV2.SendRGB(2, channel2Colors);
-
-            _isLinkCorsair = false;
-            CorsairLightingSDK.ReleaseControl(CorsairAccessMode.ExclusiveLightingControl);
+            _isLinkOpenRGB = false;
         }
 
         private void Exit_Click(object sender, EventArgs e)
         {
-            _smartDeviceV2?.Dispose();
-            CorsairLightingSDK.ReleaseControl(CorsairAccessMode.ExclusiveLightingControl);
             Shutdown();
         }
     }

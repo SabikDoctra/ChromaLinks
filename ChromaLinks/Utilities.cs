@@ -1,9 +1,5 @@
-﻿using System.Diagnostics;
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Threading;
-
-using System;
-using System.IO;
 
 namespace ChromaControl.Shared
 {

@@ -12,8 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="CUESDK.NET" Version="3.0.378.1" />
-    <PackageReference Include="NzxtRGB" Version="1.0.2" />
+    <PackageReference Include="OpenRGB.NET" Version="1.7.0" />
     <PackageReference Include="RzChromaBroadcastAPI.NET" Version="1.1.0" />
   </ItemGroup>
 
